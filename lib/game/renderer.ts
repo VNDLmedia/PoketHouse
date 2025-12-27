@@ -1,6 +1,6 @@
 import { TileType, TILE_SIZE } from './map';
-import { Entity, Interactable, WeatherType } from './types';
-import { drawParticles, Particle } from './particles';
+import { Entity, Interactable, WeatherType, Particle } from './types';
+import { drawParticles } from './particles';
 
 // --- Clean Palette ---
 const COLORS = {
