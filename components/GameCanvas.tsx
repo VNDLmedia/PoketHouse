@@ -16,7 +16,7 @@ const INTERNAL_WIDTH = 320;
 const INTERNAL_HEIGHT = 240;
 const SPEED = 0.12;
 const DAY_DURATION = 120000; 
-const WEATHER_CHANGE_CHANCE = 0.0005; // Etwas seltener
+const WEATHER_CHANGE_CHANCE = 0.0005;
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,7 +65,6 @@ export default function GameCanvas() {
     try {
         const generated = generateWorld();
         
-        // Merge generated Maps (Main + Houses) into loadedMaps
         setGameState(prev => ({
             ...prev,
             loadedMaps: {
@@ -114,14 +113,9 @@ export default function GameCanvas() {
         
         if (newTarget !== targetWeather) {
             targetWeather = newTarget;
-            // Wenn wir von Clear kommen, müssen wir langsam rein faden
-            // Wenn wir von Rain zu Clear gehen, faden wir aus
         }
     }
 
-    // Fading Logic
-    // Wenn aktuelles Wetter != Target, dann faden wir Intensity runter
-    // Wenn Intensity 0 ist, switchen wir Wetter zu Target und faden hoch
     if (weather !== targetWeather) {
         weatherIntensity -= 0.01;
         if (weatherIntensity <= 0) {
@@ -129,18 +123,20 @@ export default function GameCanvas() {
             weatherIntensity = 0;
         }
     } else {
-        // Ziel erreicht, Intensity hochfahren wenn nicht Clear
         if (weather !== 'clear') {
             if (weatherIntensity < 1) weatherIntensity += 0.01;
         } else {
-             // Bei Clear ist Intensity eigentlich egal/0, aber wir halten es sauber
              weatherIntensity = 0;
         }
     }
 
-
     if (currentState.dialog.isOpen || currentState.menuOpen || currentState.mode === 'intro') {
         const particles = updateParticles(currentState.particles);
+        if (weather === 'rain' || weather === 'storm') {
+             if (Math.random() > 0.5) {
+                particles.push(createParticle(Math.random() * INTERNAL_WIDTH, 0, '', 'rain'));
+            }
+        }
         gameStateRef.current = { ...currentState, particles, timeOfDay, day, weather, targetWeather, weatherIntensity };
         return;
     }
@@ -212,12 +208,10 @@ export default function GameCanvas() {
     // Partikel
     let newParticles = [...currentState.particles];
     
-    // Staub
     if (moved && Math.random() > 0.8 && currentMap.theme === 'outdoor' && weather !== 'rain' && weather !== 'storm') {
         newParticles.push(createParticle(player.position.x + 16, player.position.y + 28, '#fff', 'dust'));
     }
     
-    // Regen (Skaliert mit Intensity)
     if ((weather === 'rain' || weather === 'storm') && currentMap.theme === 'outdoor') {
         const spawnChance = 0.5 * weatherIntensity;
         if (Math.random() < spawnChance) {
@@ -259,7 +253,6 @@ export default function GameCanvas() {
   };
 
   const render = (ctx: CanvasRenderingContext2D) => {
-    // ... (Error / Loading check wie vorher)
      const { width, height } = ctx.canvas;
 
     if (error) {
@@ -286,7 +279,6 @@ export default function GameCanvas() {
     ctx.imageSmoothingEnabled = false;
 
     if (mode === 'intro') {
-        // ... (Intro Rendering)
          ctx.fillStyle = '#111';
         ctx.fillRect(0, 0, width, height);
         
@@ -309,7 +301,6 @@ export default function GameCanvas() {
     const currentMap = loadedMaps[currentMapId];
     if (!currentMap) return;
     
-    // ... (Camera Logic wie vorher)
     const mapWidth = currentMap.tiles[0].length * TILE_SIZE;
     const mapHeight = currentMap.tiles.length * TILE_SIZE;
     
@@ -335,7 +326,8 @@ export default function GameCanvas() {
       for (let x = startCol; x < endCol; x++) {
         if (y < 0 || y >= currentMap.tiles.length || x < 0 || x >= currentMap.tiles[0].length) continue;
         const tile = currentMap.tiles[y][x];
-        drawTile(ctx, tile, x * TILE_SIZE, y * TILE_SIZE, now);
+        // Pass map and coords for context aware rendering
+        drawTile(ctx, tile, x * TILE_SIZE, y * TILE_SIZE, now, currentMap, x, y);
       }
     }
 
@@ -369,9 +361,8 @@ export default function GameCanvas() {
         drawWeather(ctx, width, height, weather, weatherIntensity, now);
     }
 
-    // UI (Menu / HUD)
+    // UI
     if (menuOpen) {
-       // ... (Menu Rendering)
         ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
         ctx.fillRect(0, 0, width, height);
         
@@ -427,7 +418,6 @@ export default function GameCanvas() {
 
   useGameLoop(update, render, canvasRef);
   
-  // ... (Intro Handler)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (gameState.mode === 'intro' && (e.code === 'Space' || e.code === 'Enter')) {
@@ -466,7 +456,6 @@ export default function GameCanvas() {
 
       {gameState.mode === 'game' && (
       <>
-        {/* Mobile Controls */}
         <div className="absolute bottom-8 left-8 flex flex-col gap-2 opacity-50 hover:opacity-100 transition-opacity md:hidden">
             <div className="flex justify-center">
                 <button className="w-12 h-12 bg-white/20 rounded-t active:bg-white/40 backdrop-blur-md border border-white/30" onTouchStart={() => setKey('ArrowUp', true)} onTouchEnd={() => setKey('ArrowUp', false)}>▲</button>
