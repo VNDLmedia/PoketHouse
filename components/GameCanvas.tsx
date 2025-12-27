@@ -3,16 +3,20 @@
 import { useRef, useState, useEffect } from 'react';
 import { useGameLoop } from '@/hooks/useGameLoop';
 import { useInput } from '@/hooks/useInput';
-import { Entity, GameState } from '@/lib/game/types';
+import { Entity, GameState, WeatherType } from '@/lib/game/types';
 import { MAPS, TILE_SIZE, ITEMS } from '@/lib/game/map';
 import { checkCollision, checkInteraction, checkPortal } from '@/lib/game/physics';
 import { DialogBox } from '@/components/DialogBox';
-import { drawTile, drawPlayer, drawItem } from '@/lib/game/renderer';
+import { drawTile, drawPlayer, drawItem, drawDayNightCycle, drawWeather } from '@/lib/game/renderer';
+import { createParticle, updateParticles, drawParticles } from '@/lib/game/particles';
 import { generateWorld } from '@/lib/game/procgen';
+import { INITIAL_QUESTS, STORY_FLAGS } from '@/lib/game/story';
 
 const INTERNAL_WIDTH = 320;
 const INTERNAL_HEIGHT = 240;
 const SPEED = 0.12;
+const DAY_DURATION = 120000; // 2 Minuten für einen Tag
+const WEATHER_CHANGE_CHANCE = 0.001; // Chance pro Frame
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -22,8 +26,9 @@ export default function GameCanvas() {
   const [error, setError] = useState<string | null>(null);
 
   const [gameState, setGameState] = useState<GameState>({
+    mode: 'intro',
     currentMapId: 'generated',
-    loadedMaps: { ...MAPS }, // Statische Maps laden
+    loadedMaps: { ...MAPS },
     player: {
       id: 'player',
       position: { x: 0, y: 0 }, 
@@ -33,13 +38,26 @@ export default function GameCanvas() {
     },
     flags: {},
     inventory: [],
+    quests: INITIAL_QUESTS,
     dialog: {
         isOpen: false,
         text: [],
         currentLine: 0
     },
-    menuOpen: false
+    menuOpen: false,
+    timeOfDay: 8,
+    day: 1,
+    weather: 'clear',
+    weatherTimer: 0,
+    particles: []
   });
+
+  const enterFullscreen = () => {
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen();
+    }
+  };
 
   useEffect(() => {
     try {
@@ -73,14 +91,41 @@ export default function GameCanvas() {
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
   const lastInteractionTime = useRef(0);
+  const startTimeRef = useRef(Date.now());
 
   const update = (deltaTime: number) => {
     if (!isLoaded) return;
     const currentState = gameStateRef.current;
-    if (currentState.dialog.isOpen || currentState.menuOpen) return;
+    
+    // Time Cycle Logic
+    const elapsed = Date.now() - startTimeRef.current;
+    const totalHours = 8 + (elapsed / DAY_DURATION) * 24;
+    const timeOfDay = totalHours % 24;
+    const day = Math.floor(totalHours / 24) + 1;
+    
+    // Weather Logic
+    let weather = currentState.weather;
+    if (Math.random() < WEATHER_CHANGE_CHANCE) {
+        const r = Math.random();
+        if (r < 0.6) weather = 'clear';
+        else if (r < 0.8) weather = 'cloudy';
+        else if (r < 0.95) weather = 'rain';
+        else weather = 'storm';
+    }
+
+    if (currentState.dialog.isOpen || currentState.menuOpen || currentState.mode === 'intro') {
+        const particles = updateParticles(currentState.particles);
+        // Auch während Pause Regen fallen lassen
+        if (weather === 'rain' || weather === 'storm') {
+             if (Math.random() > 0.5) {
+                particles.push(createParticle(Math.random() * INTERNAL_WIDTH, 0, '', 'rain'));
+            }
+        }
+        gameStateRef.current = { ...currentState, particles, timeOfDay, day, weather };
+        return;
+    }
 
     const player = { ...currentState.player };
-    // Map aus State laden
     const currentMap = currentState.loadedMaps[currentState.currentMapId];
     if (!currentMap) return;
     
@@ -144,8 +189,41 @@ export default function GameCanvas() {
         }
     }
 
+    // Partikel Logic
+    let newParticles = [...currentState.particles];
+    
+    // Staub beim Laufen
+    if (moved && Math.random() > 0.8 && currentMap.theme === 'outdoor' && weather !== 'rain' && weather !== 'storm') {
+        newParticles.push(createParticle(player.position.x + 16, player.position.y + 28, '#fff', 'dust'));
+    }
+    
+    // Regen
+    if ((weather === 'rain' || weather === 'storm') && currentMap.theme === 'outdoor') {
+        // Regen im sichtbaren Bereich erzeugen (Kamera-basiert wäre besser, aber Screen-Space reicht für den Effekt hier)
+        // Da Particles in World-Space sind, müssen wir die Kamera berücksichtigen, 
+        // ABER wir rendern Partikel momentan global. Für einfachen Regen rendern wir ihn im Screen Space am besten.
+        // HIER: Wir nutzen Particles im Screen Space Hack oder World Space.
+        // World Space Rain ist schwerer. Wir machen es im Renderer als Overlay oder hier als "Screen Particles".
+        // Lass uns Partikel im Renderer "immer oben" spawnen relativ zur Kamera.
+        // Vereinfachung: Wir nutzen createParticle hier, müssen aber im Renderer aufpassen.
+        // Besser: Regen direkt im Renderer zeichnen als Overlay.
+        // Aber User wollte Partikel System. Also:
+        
+        // World Space Rain spawnen um den Spieler herum
+        const cameraX = player.position.x - INTERNAL_WIDTH/2;
+        const cameraY = player.position.y - INTERNAL_HEIGHT/2;
+        
+        for(let i=0; i<2; i++) {
+             newParticles.push(createParticle(
+                 cameraX + Math.random() * INTERNAL_WIDTH, 
+                 cameraY + Math.random() * INTERNAL_HEIGHT - 100, // Etwas oberhalb
+                 '', 
+                 'rain'
+             ));
+        }
+    }
+
     if (moved) {
-        // Kollisions-Check jetzt mit Map-Objekt
         if (!checkCollision({ x: nextX, y: player.position.y }, currentMap)) player.position.x = nextX;
         if (!checkCollision({ x: player.position.x, y: nextY }, currentMap)) player.position.y = nextY;
         
@@ -164,7 +242,9 @@ export default function GameCanvas() {
         }
     }
     player.isMoving = moved;
-    gameStateRef.current = { ...currentState, player };
+    newParticles = updateParticles(newParticles);
+    
+    gameStateRef.current = { ...currentState, player, particles: newParticles, timeOfDay, day, weather };
   };
 
   const render = (ctx: CanvasRenderingContext2D) => {
@@ -189,12 +269,36 @@ export default function GameCanvas() {
         return;
     }
 
-    const { player, currentMapId, menuOpen, inventory, loadedMaps } = gameStateRef.current;
-    const currentMap = loadedMaps[currentMapId];
-    if (!currentMap) return;
+    const { player, currentMapId, menuOpen, inventory, loadedMaps, particles, timeOfDay, mode, quests, day, weather } = gameStateRef.current;
     
     ctx.imageSmoothingEnabled = false;
 
+    // --- INTRO SCREEN ---
+    if (mode === 'intro') {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.fillStyle = '#ffcc00';
+        ctx.font = 'bold 30px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText("POCKET", width/2, height/2 - 40);
+        ctx.fillStyle = '#fff';
+        ctx.fillText("ADVENTURE", width/2, height/2);
+        
+        const blink = Math.floor(Date.now() / 500) % 2 === 0;
+        if (blink) {
+            ctx.fillStyle = '#888';
+            ctx.font = '12px monospace';
+            ctx.fillText("- PRESS SPACE TO START -", width/2, height/2 + 60);
+        }
+        return;
+    }
+
+    // --- GAME RENDER ---
+
+    const currentMap = loadedMaps[currentMapId];
+    if (!currentMap) return;
+    
     const mapWidth = currentMap.tiles[0].length * TILE_SIZE;
     const mapHeight = currentMap.tiles.length * TILE_SIZE;
     
@@ -211,7 +315,6 @@ export default function GameCanvas() {
     ctx.translate(-cameraX, -cameraY);
 
     const now = Date.now();
-
     const startCol = Math.floor(cameraX / TILE_SIZE);
     const endCol = Math.floor((cameraX + width) / TILE_SIZE) + 1;
     const startRow = Math.floor(cameraY / TILE_SIZE);
@@ -245,8 +348,18 @@ export default function GameCanvas() {
         }
     }
 
+    drawParticles(ctx, particles);
+
     ctx.restore();
 
+    // --- OVERLAYS ---
+
+    if (currentMap.theme === 'outdoor') {
+        drawDayNightCycle(ctx, width, height, timeOfDay);
+        drawWeather(ctx, width, height, weather, now);
+    }
+
+    // UI
     if (menuOpen) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
         ctx.fillRect(0, 0, width, height);
@@ -254,27 +367,77 @@ export default function GameCanvas() {
         ctx.fillStyle = '#fff';
         ctx.font = '10px "Courier New", monospace'; 
         ctx.textAlign = 'center';
-        ctx.fillText("- PAUSE -", width/2, 20);
+        ctx.fillText("- MENU -", width/2, 20);
+        ctx.fillText(`Day ${day} - ${Math.floor(timeOfDay)}:00`, width/2, 35);
+        ctx.fillStyle = '#aaa';
+        ctx.fillText(`Weather: ${weather}`, width/2, 45);
 
         ctx.textAlign = 'left';
-        if (inventory.length === 0) {
-            ctx.fillStyle = '#888';
-            ctx.fillText("Empty Pocket", 20, 50);
-        } else {
-            inventory.forEach((key, index) => {
-                const item = ITEMS[key];
-                ctx.fillStyle = '#eee';
-                ctx.fillText(`> ${item?.name || key}`, 20, 50 + (index * 15));
-            });
-        }
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText("QUESTS:", 20, 60);
+        let qY = 75;
+        Object.values(quests).forEach(q => {
+            if (q.status === 'active') {
+                ctx.fillStyle = '#fff';
+                ctx.fillText(`! ${q.title}`, 20, qY);
+                ctx.fillStyle = '#aaa';
+                ctx.fillText(`  ${q.description}`, 20, qY + 12);
+                qY += 30;
+            }
+        });
+
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText("BAG:", 160, 60);
+        inventory.forEach((key, index) => {
+            const item = ITEMS[key];
+            ctx.fillStyle = '#eee';
+            ctx.fillText(`> ${item?.name || key}`, 160, 75 + (index * 15));
+        });
         
         ctx.fillStyle = '#ffff00';
         ctx.textAlign = 'center';
         ctx.fillText("[ESC] Back", width/2, height - 10);
+    } else {
+        // Mini HUD
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'right';
+        const hours = Math.floor(timeOfDay);
+        const mins = Math.floor((timeOfDay - hours) * 60);
+        
+        // Wetter Icon (Text basierend)
+        let weatherIcon = '';
+        if (weather === 'rain') weatherIcon = '🌧';
+        if (weather === 'storm') weatherIcon = '⛈';
+        if (weather === 'cloudy') weatherIcon = '☁';
+        if (weather === 'clear') weatherIcon = '☀';
+
+        ctx.fillText(`Day ${day} ${weatherIcon} ${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`, width - 10, 15);
     }
   };
 
   useGameLoop(update, render, canvasRef);
+
+  // Intro Key Handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (gameState.mode === 'intro' && (e.code === 'Space' || e.code === 'Enter')) {
+            setGameState(prev => ({ ...prev, mode: 'game' }));
+            setTimeout(() => {
+                setGameState(prev => ({
+                    ...prev,
+                    dialog: {
+                        isOpen: true,
+                        text: ["Willkommen in der Welt.", "Deine Reise beginnt jetzt."],
+                        currentLine: 0
+                    }
+                }));
+            }, 1000);
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState.mode]);
 
   return (
     <div className="w-screen h-screen bg-black flex justify-center items-center relative overflow-hidden">
@@ -288,45 +451,56 @@ export default function GameCanvas() {
         }}
       />
       
-      <div className="absolute bottom-8 left-8 flex flex-col gap-2 opacity-50 hover:opacity-100 transition-opacity md:hidden">
-         <div className="flex justify-center">
-            <button 
-                className="w-12 h-12 bg-white/20 rounded-t active:bg-white/40 backdrop-blur-md border border-white/30"
-                onTouchStart={() => setKey('ArrowUp', true)}
-                onTouchEnd={() => setKey('ArrowUp', false)}
-            >▲</button>
-         </div>
-         <div className="flex gap-2">
-            <button 
-                className="w-12 h-12 bg-white/20 rounded-l active:bg-white/40 backdrop-blur-md border border-white/30"
-                onTouchStart={() => setKey('ArrowLeft', true)}
-                onTouchEnd={() => setKey('ArrowLeft', false)}
-            >◀</button>
-            <button 
-                className="w-12 h-12 bg-white/20 rounded active:bg-white/40 backdrop-blur-md border border-white/30"
-                onTouchStart={() => setKey('ArrowDown', true)}
-                onTouchEnd={() => setKey('ArrowDown', false)}
-            >▼</button>
-            <button 
-                className="w-12 h-12 bg-white/20 rounded-r active:bg-white/40 backdrop-blur-md border border-white/30"
-                onTouchStart={() => setKey('ArrowRight', true)}
-                onTouchEnd={() => setKey('ArrowRight', false)}
-            >▶</button>
-         </div>
-      </div>
+      <button 
+        onClick={enterFullscreen}
+        className="absolute top-4 right-4 text-white/50 hover:text-white z-50 text-xs border border-white/20 px-2 py-1 rounded"
+      >
+        [Fullscreen]
+      </button>
 
-      <div className="absolute bottom-8 right-8 flex gap-4 opacity-50 hover:opacity-100 transition-opacity md:hidden">
-          <button 
-                className="w-16 h-16 bg-red-500/30 rounded-full active:bg-red-500/50 backdrop-blur-md border border-white/30 flex items-center justify-center text-white font-bold"
-                onTouchStart={() => setKey('Space', true)}
-                onTouchEnd={() => setKey('Space', false)}
-          >A</button>
-          <button 
-                className="w-12 h-12 mt-4 bg-blue-500/30 rounded-full active:bg-blue-500/50 backdrop-blur-md border border-white/30 flex items-center justify-center text-white text-xs"
-                onTouchStart={() => setKey('Escape', true)}
-                onTouchEnd={() => setKey('Escape', false)}
-          >M</button>
-      </div>
+      {gameState.mode === 'game' && (
+      <>
+        <div className="absolute bottom-8 left-8 flex flex-col gap-2 opacity-50 hover:opacity-100 transition-opacity md:hidden">
+            <div className="flex justify-center">
+                <button 
+                    className="w-12 h-12 bg-white/20 rounded-t active:bg-white/40 backdrop-blur-md border border-white/30"
+                    onTouchStart={() => setKey('ArrowUp', true)}
+                    onTouchEnd={() => setKey('ArrowUp', false)}
+                >▲</button>
+            </div>
+            <div className="flex gap-2">
+                <button 
+                    className="w-12 h-12 bg-white/20 rounded-l active:bg-white/40 backdrop-blur-md border border-white/30"
+                    onTouchStart={() => setKey('ArrowLeft', true)}
+                    onTouchEnd={() => setKey('ArrowLeft', false)}
+                >◀</button>
+                <button 
+                    className="w-12 h-12 bg-white/20 rounded active:bg-white/40 backdrop-blur-md border border-white/30"
+                    onTouchStart={() => setKey('ArrowDown', true)}
+                    onTouchEnd={() => setKey('ArrowDown', false)}
+                >▼</button>
+                <button 
+                    className="w-12 h-12 bg-white/20 rounded-r active:bg-white/40 backdrop-blur-md border border-white/30"
+                    onTouchStart={() => setKey('ArrowRight', true)}
+                    onTouchEnd={() => setKey('ArrowRight', false)}
+                >▶</button>
+            </div>
+        </div>
+
+        <div className="absolute bottom-8 right-8 flex gap-4 opacity-50 hover:opacity-100 transition-opacity md:hidden">
+            <button 
+                    className="w-16 h-16 bg-red-500/30 rounded-full active:bg-red-500/50 backdrop-blur-md border border-white/30 flex items-center justify-center text-white font-bold"
+                    onTouchStart={() => setKey('Space', true)}
+                    onTouchEnd={() => setKey('Space', false)}
+            >A</button>
+            <button 
+                    className="w-12 h-12 mt-4 bg-blue-500/30 rounded-full active:bg-blue-500/50 backdrop-blur-md border border-white/30 flex items-center justify-center text-white text-xs"
+                    onTouchStart={() => setKey('Escape', true)}
+                    onTouchEnd={() => setKey('Escape', false)}
+            >M</button>
+        </div>
+      </>
+      )}
 
       <DialogBox 
         isOpen={gameState.dialog.isOpen}
