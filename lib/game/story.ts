@@ -4,29 +4,29 @@ export const INITIAL_QUESTS: Record<string, Quest> = {
   'intro_quest': {
     id: 'intro_quest',
     title: 'Ein neuer Anfang',
-    description: 'Finde den Dorfältesten, er wartet im Zentrum.',
+    description: 'Erkunde die Welt und finde Zivilisation.',
     status: 'active',
     steps: [
-      { id: 'talk_elder', description: 'Sprich mit dem Ältesten', completed: false, requiredFlag: 'met_elder' }
+      { id: 'explore', description: 'Finde ein Haus oder Ruine', completed: false, requiredFlag: 'found_structure' }
     ]
   },
-  'lost_potion': {
-    id: 'lost_potion',
-    title: 'Die verlorene Medizin',
-    description: 'Der Älteste braucht seine Medizin. Sie liegt irgendwo im Wald beim Wasser.',
+  'dungeon_quest': {
+    id: 'dungeon_quest',
+    title: 'Das dunkle Gewölbe',
+    description: 'Eine dunkle Aura geht von den Ruinen aus.',
     status: 'inactive',
     steps: [
-      { id: 'find_potion', description: 'Finde den Heiltrank', completed: false, requiredItem: 'potion' },
-      { id: 'return_potion', description: 'Bring den Trank zum Ältesten', completed: false, requiredFlag: 'returned_potion' }
+      { id: 'enter_dungeon', description: 'Betrete das Gewölbe', completed: false, requiredFlag: 'entered_dungeon' },
+      { id: 'kill_boss', description: 'Besiege den Wächter', completed: false, requiredFlag: 'killed_boss' }
     ],
-    rewardItem: 'old_key' // Schlüssel zum Haus?
+    rewardXp: 100,
+    rewardItem: 'legendary_sword'
   }
 };
 
 export const STORY_FLAGS = {
   INTRO_DONE: 'intro_done',
-  MET_ELDER: 'met_elder',
-  GOT_POTION: 'got_potion',
-  RETURNED_POTION: 'returned_potion'
+  FOUND_STRUCTURE: 'found_structure',
+  ENTERED_DUNGEON: 'entered_dungeon',
+  KILLED_BOSS: 'killed_boss'
 };
-

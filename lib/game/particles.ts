@@ -28,7 +28,10 @@ export const createParticle = (x: number, y: number, color: string, type: 'dust'
       color = `rgba(170, 190, 255, ${0.4 + Math.random() * 0.2})`;
   }
 
-  return { x, y, vx, vy, life, maxLife: life, color, size, type };
+  return { 
+      id: Math.random(),
+      x, y, vx, vy, life, maxLife: life, color, size, alpha: 1, type 
+  };
 };
 
 export const updateParticles = (particles: Particle[]): Particle[] => {
