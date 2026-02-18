@@ -302,32 +302,22 @@ export default function GameCanvas() {
                     // Zelda usually pushes by walking into it.
                 }
                 return; 
-            } else {
-                // Attack
+            } else if (currentMap.enemies && currentMap.enemies.length > 0) {
+                // Attack (only when enemies exist on the map)
                 if (!player.isAttacking) {
                     player.isAttacking = true;
-                    player.attackTimer = 300; // ms
+                    player.attackTimer = 300;
                     audio.playAttack();
                     lastInteractionTime.current = now;
                     
-                    // Check hits
-                    const hits = checkAttack(player, currentMap.enemies || []);
+                    const hits = checkAttack(player, currentMap.enemies);
                     if (hits.length > 0) {
                         hits.forEach(enemy => {
                             audio.playHit();
-                            // Damage Enemy (Modify enemies in place via ref/copy - simplified here)
-                            // We need to update enemy state in map
-                            // Ideally we dispatch an event or mark enemy as hit
-                            // For this prototype we will modify the map data directly (dirty but fast)
-                            // But we have updateEnemies below which returns new list. 
-                            // We should handle damage there or here. 
-                            // Let's add a `hurt` flag to enemy or just remove HP if we had it.
-                            // Assuming enemies die in 1 hit for now or add HP to Enemy type.
-                            enemy.state = 'retreat'; // visual feedback
-                            // Remove enemy?
+                            enemy.state = 'retreat';
                              setGameState(prev => {
                                  const map = prev.loadedMaps[prev.currentMapId];
-                                 const newEnemies = map.enemies.filter(e => e.id !== enemy.id); // One hit kill for now
+                                 const newEnemies = map.enemies.filter(e => e.id !== enemy.id);
                                  return {
                                      ...prev,
                                      loadedMaps: {
