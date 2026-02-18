@@ -4,12 +4,12 @@ import { useRef, useState, useEffect } from 'react';
 import { useGameLoop } from '@/hooks/useGameLoop';
 import { useInput } from '@/hooks/useInput';
 import { Entity, GameState, WeatherType, Enemy } from '@/lib/game/types';
-import { MAPS, TILE_SIZE, ITEMS } from '@/lib/game/map';
+import { MAPS, TILE_SIZE, ITEMS, WALKABLE_TILES } from '@/lib/game/map';
+import { COIN_COUNT } from '@/lib/game/story';
 import { checkCollision, checkInteraction, checkPortal, checkAttack, resolvePush } from '@/lib/game/physics';
 import { DialogBox } from '@/components/DialogBox';
 import { drawTile, drawPlayer, drawItem, drawDayNightCycle, drawWeather, drawEnemy } from '@/lib/game/renderer';
 import { createParticle, updateParticles, drawParticles } from '@/lib/game/particles';
-import { generateWorld } from '@/lib/game/procgen';
 import { INITIAL_QUESTS } from '@/lib/game/story';
 import { updateEnemies } from '@/lib/game/ai';
 import { audio } from '@/lib/game/audio';
@@ -21,6 +21,14 @@ const SPEED = 0.12;
 const DAY_DURATION = 120000; 
 const WEATHER_CHANGE_CHANCE = 0.0005;
 
+const MINIMAP_COLORS: Record<number, string> = {
+  0: '#95d5b2', 1: '#3a5a40', 2: '#48cae4', 3: '#faedcd', 4: '#ff6b6b',
+  5: '#74c69d', 6: '#52b788', 7: '#e6ccb2', 8: '#ddb892', 9: '#adb5bd',
+  10: '#6c757d', 11: '#e9ecef', 12: '#ddb892', 13: '#d62828', 14: '#9d0208',
+  15: '#555', 16: '#b0b0b0', 17: '#d0ccc4', 18: '#707070', 19: '#c4b8a8',
+  20: '#2d6a4f', 21: '#4caf50', 22: '#808080', 23: '#2d5a30',
+};
+
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { keys, setKey } = useInput();
@@ -28,6 +36,9 @@ export default function GameCanvas() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(false); 
+  const mapOpenRef = useRef(false);
+  const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const minimapDirty = useRef(true);
 
   const [gameState, setGameState] = useState<GameState>({
     mode: 'intro',
@@ -98,26 +109,76 @@ export default function GameCanvas() {
     if (isMobile) setShowControls(true);
 
     if (gameState.mode === 'intro' && !isLoaded) {
-        // Generate world in background if no save loaded yet
-        try {
-            const generated = generateWorld();
-            setGameState(prev => ({
-                ...prev,
-                loadedMaps: {
-                    ...prev.loadedMaps,
-                    'generated': generated.worldMap,
-                    ...generated.interiorMaps
-                },
-                player: {
-                    ...prev.player,
-                    position: { x: generated.spawn.x * TILE_SIZE, y: generated.spawn.y * TILE_SIZE }
+        fetch('/maps/1.1.json')
+            .then(res => res.json())
+            .then((mapData) => {
+                const spawnX = 185;
+                const spawnY = 50;
+
+                // Spawn coins on walkable tiles within 30 tiles of spawn
+                const COIN_RADIUS = 30;
+                const walkable: {x: number, y: number}[] = [];
+                const minY = Math.max(0, spawnY - COIN_RADIUS);
+                const maxY = Math.min(mapData.tiles.length - 1, spawnY + COIN_RADIUS);
+                const minX = Math.max(0, spawnX - COIN_RADIUS);
+                const maxX = Math.min(mapData.tiles[0].length - 1, spawnX + COIN_RADIUS);
+                for (let ty = minY; ty <= maxY; ty++) {
+                    for (let tx = minX; tx <= maxX; tx++) {
+                        const dist = Math.sqrt((tx - spawnX) ** 2 + (ty - spawnY) ** 2);
+                        if (dist <= COIN_RADIUS && dist > 3 && WALKABLE_TILES.has(mapData.tiles[ty][tx])) {
+                            walkable.push({ x: tx, y: ty });
+                        }
+                    }
                 }
-            }));
-            setIsLoaded(true);
-        } catch (e) {
-            console.error("Failed to generate world:", e);
-            setError("Fehler bei der Welt-Generierung. Bitte neu laden.");
-        }
+                for (let i = walkable.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [walkable[i], walkable[j]] = [walkable[j], walkable[i]];
+                }
+                const coins = walkable.slice(0, COIN_COUNT).map((pos, i) => ({
+                    id: `coin_${i}`,
+                    position: { x: pos.x * TILE_SIZE, y: pos.y * TILE_SIZE },
+                    width: TILE_SIZE,
+                    height: TILE_SIZE,
+                    type: 'item' as const,
+                    itemKey: `coin_${i}`,
+                    active: true,
+                    trigger: 'touch' as const,
+                }));
+                const hackathonNpc = {
+                    id: 'npc_hackathon',
+                    position: { x: 187 * TILE_SIZE, y: 50 * TILE_SIZE },
+                    width: TILE_SIZE,
+                    height: TILE_SIZE,
+                    type: 'npc' as const,
+                    text: [
+                        'Hey! Willkommen beim Siemens Hackathon!',
+                        'Schön, dass du da bist.',
+                        'Erkunde das Gelände und sammle alle Münzen!',
+                        'Viel Erfolg und vor allem: Viel Spaß!',
+                    ],
+                    active: true,
+                    trigger: 'press' as const,
+                };
+                mapData.interactables = [...(mapData.interactables || []), ...coins, hackathonNpc];
+
+                setGameState(prev => ({
+                    ...prev,
+                    loadedMaps: {
+                        ...prev.loadedMaps,
+                        'generated': mapData,
+                    },
+                    player: {
+                        ...prev.player,
+                        position: { x: spawnX * TILE_SIZE, y: spawnY * TILE_SIZE }
+                    }
+                }));
+                minimapDirty.current = true;
+                setIsLoaded(true);
+            })
+            .catch(e => {
+                console.error("Failed to load map:", e);
+                setError("Fehler beim Laden der Karte. Bitte neu laden.");
+            });
     }
   }, []);
 
@@ -156,7 +217,25 @@ export default function GameCanvas() {
         else weatherIntensity = 0;
     }
 
-    if (currentState.dialog.isOpen || currentState.menuOpen || currentState.mode === 'intro') {
+    // Map overlay toggle (must be before early-return so it works while paused)
+    if (keys['KeyM']) {
+         const now = Date.now();
+         if (now - lastInteractionTime.current > 300) {
+             lastInteractionTime.current = now;
+             mapOpenRef.current = !mapOpenRef.current;
+         }
+    }
+    // Menu / close overlays (must be before early-return)
+    if (keys['Escape']) {
+         const now = Date.now();
+         if (now - lastInteractionTime.current > 300) {
+             lastInteractionTime.current = now;
+             if (mapOpenRef.current) { mapOpenRef.current = false; }
+             else { setGameState(prev => ({ ...prev, menuOpen: !prev.menuOpen })); }
+         }
+    }
+
+    if (currentState.dialog.isOpen || currentState.menuOpen || mapOpenRef.current || currentState.mode === 'intro') {
         const particles = updateParticles(currentState.particles);
         if (weather === 'rain' || weather === 'storm') {
              if (Math.random() > 0.5) particles.push(createParticle(Math.random() * INTERNAL_WIDTH, 0, '', 'rain'));
@@ -195,15 +274,6 @@ export default function GameCanvas() {
         if (player.attackTimer <= 0) player.isAttacking = false;
     }
     
-    // Menu
-    if (keys['Escape'] || keys['KeyM']) {
-         const now = Date.now();
-         if (now - lastInteractionTime.current > 300) {
-             lastInteractionTime.current = now;
-             setGameState(prev => ({ ...prev, menuOpen: !prev.menuOpen }));
-             return;
-         }
-    }
 
     // Action (Interact / Attack)
     if (keys['Space'] || keys['Enter'] || keys['ButtonB']) {
@@ -315,6 +385,49 @@ export default function GameCanvas() {
             return; 
         }
     }
+    // Auto-pickup touch-triggered items (coins)
+    const pcx = player.position.x + TILE_SIZE / 2;
+    const pcy = player.position.y + TILE_SIZE / 2;
+    for (const item of currentMap.interactables) {
+        if (item.trigger !== 'touch' || !item.active || item.type !== 'item' || !item.itemKey) continue;
+        if (currentState.inventory.includes(item.itemKey)) continue;
+        const ix = item.position.x + item.width / 2;
+        const iy = item.position.y + item.height / 2;
+        if (Math.abs(pcx - ix) < TILE_SIZE * 0.7 && Math.abs(pcy - iy) < TILE_SIZE * 0.7) {
+            audio.playCollect();
+            setGameState(prev => {
+                if (prev.inventory.includes(item.itemKey!)) return prev;
+                const newInv = [...prev.inventory, item.itemKey!];
+                const coinCount = newInv.filter(k => k.startsWith('coin_')).length;
+                const newQuests = { ...prev.quests };
+                if (newQuests['coin_quest'] && newQuests['coin_quest'].status === 'active') {
+                    const step = { ...newQuests['coin_quest'].steps[0] };
+                    step.count = coinCount;
+                    if (coinCount >= (step.targetCount || COIN_COUNT)) {
+                        step.completed = true;
+                        newQuests['coin_quest'] = { ...newQuests['coin_quest'], steps: [step], status: 'completed' };
+                    } else {
+                        newQuests['coin_quest'] = { ...newQuests['coin_quest'], steps: [step] };
+                    }
+                }
+                const isComplete = coinCount >= COIN_COUNT;
+                return {
+                    ...prev,
+                    inventory: newInv,
+                    quests: newQuests,
+                    dialog: {
+                        isOpen: true,
+                        text: isComplete
+                            ? [`Münze ${coinCount}/${COIN_COUNT} gesammelt!`, 'Alle Münzen gefunden! Quest abgeschlossen!']
+                            : [`Münze ${coinCount}/${COIN_COUNT} gesammelt!`],
+                        currentLine: 0,
+                    },
+                };
+            });
+            break;
+        }
+    }
+
     player.isMoving = moved;
     if (moved && Math.floor(Date.now() / 300) % 2 === 0) {
         // Footsteps?
@@ -475,23 +588,60 @@ export default function GameCanvas() {
         drawWeather(ctx, width, height, weather, weatherIntensity, now);
     }
 
-    // HUD (Hearts)
+    // HUD (Hearts + Coin counter)
     if (gameState.mode === 'game' && !menuOpen) {
         const hp = player.stats?.hp || 6;
         const maxHp = player.stats?.maxHp || 6;
-        for(let i=0; i<Math.ceil(maxHp/2); i++) {
-             const full = (i+1)*2 <= hp;
-             const half = (i+1)*2 - 1 === hp;
-             ctx.fillStyle = full ? '#f00' : (half ? '#f88' : '#444');
-             const hx = 10 + i * 14;
-             const hy = 10;
-             // Heart shape simplified
-             ctx.beginPath();
-             ctx.arc(hx - 3, hy - 3, 3, 0, Math.PI, true);
-             ctx.arc(hx + 3, hy - 3, 3, 0, Math.PI, true);
-             ctx.lineTo(hx, hy + 5);
-             ctx.fill();
+        for (let i = 0; i < Math.ceil(maxHp / 2); i++) {
+            const full = (i + 1) * 2 <= hp;
+            const half = (i + 1) * 2 - 1 === hp;
+            ctx.fillStyle = full ? '#f00' : (half ? '#f88' : '#444');
+            const hx = 14 + i * 16;
+            const hy = 14;
+            const r = 4;
+            ctx.beginPath();
+            ctx.moveTo(hx, hy + 2);
+            ctx.arc(hx - r / 2, hy - r / 2, r, Math.PI * 0.25, Math.PI, false);
+            ctx.lineTo(hx - r / 2 - r, hy - r / 2);
+            ctx.arc(hx + r / 2, hy - r / 2, r, Math.PI, Math.PI * 1.75, false);
+            ctx.closePath();
+            ctx.fill();
+            // Simpler approach: filled rects for pixel hearts
+            ctx.fillRect(hx - 5, hy - 4, 4, 4);
+            ctx.fillRect(hx + 1, hy - 4, 4, 4);
+            ctx.fillRect(hx - 6, hy - 2, 12, 4);
+            ctx.fillRect(hx - 5, hy + 2, 10, 2);
+            ctx.fillRect(hx - 3, hy + 4, 6, 2);
+            ctx.fillRect(hx - 1, hy + 6, 2, 1);
+            // Highlight
+            ctx.fillStyle = full ? '#ff6666' : (half ? '#fbb' : '#555');
+            ctx.fillRect(hx - 4, hy - 3, 2, 2);
         }
+
+        // Coin counter
+        const coinCount = inventory.filter(k => k.startsWith('coin_')).length;
+        const coinY = 28;
+        const coinSpin = Math.sin(now / 250);
+        const cw = Math.max(2, Math.abs(coinSpin) * 5);
+        ctx.fillStyle = '#ffd700';
+        ctx.beginPath();
+        ctx.ellipse(16, coinY, cw, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (cw > 3) { ctx.fillStyle = '#ffec80'; ctx.beginPath(); ctx.ellipse(15, coinY - 1, cw * 0.4, 3, 0, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#ffd700';
+        ctx.font = 'bold 8px "Courier New", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${coinCount}/${COIN_COUNT}`, 24, coinY + 3);
+
+        // Player coordinates (top-right)
+        const ptx = Math.floor(player.position.x / TILE_SIZE);
+        const pty = Math.floor(player.position.y / TILE_SIZE);
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(width - 62, 4, 58, 14);
+        ctx.fillStyle = '#fff';
+        ctx.font = '8px "Courier New", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(`X:${ptx} Y:${pty}`, width - 6, 14);
     }
 
     // UI
@@ -506,24 +656,142 @@ export default function GameCanvas() {
         ctx.fillStyle = '#ffcc00'; ctx.fillText("QUESTS:", 20, 60);
         let qY = 75;
         Object.values(quests).forEach(q => {
-            if (q.status === 'active') {
-                ctx.fillStyle = '#fff'; ctx.fillText(`! ${q.title}`, 20, qY);
-                ctx.fillStyle = '#aaa'; ctx.fillText(`  ${q.description}`, 20, qY + 12);
+            if (q.status === 'active' || q.status === 'completed') {
+                const done = q.status === 'completed';
+                ctx.fillStyle = done ? '#4caf50' : '#fff';
+                ctx.fillText(`${done ? '✓' : '!'} ${q.title}`, 20, qY);
+                ctx.fillStyle = '#aaa';
+                const step = q.steps[0];
+                const progress = step.targetCount ? ` (${step.count || 0}/${step.targetCount})` : '';
+                ctx.fillText(`  ${step.description}${progress}`, 20, qY + 12);
                 qY += 30;
             }
         });
 
-        ctx.fillStyle = '#ffcc00'; ctx.fillText("BAG:", 160, 60);
-        inventory.forEach((key, index) => {
-            const item = ITEMS[key];
-            ctx.fillStyle = '#eee'; ctx.fillText(`> ${item?.name || key}`, 160, 75 + (index * 15));
+        // NPCs
+        const npcs = currentMap.interactables.filter(i => i.type === 'npc');
+        if (npcs.length > 0) {
+            ctx.fillStyle = '#4cc9f0'; ctx.fillText("NPCs:", 160, 60);
+            npcs.forEach((npc, i) => {
+                const nx = Math.floor(npc.position.x / TILE_SIZE);
+                const ny = Math.floor(npc.position.y / TILE_SIZE);
+                ctx.fillStyle = '#ccc';
+                ctx.fillText(`${npc.id} (${nx},${ny})`, 162, 73 + i * 12);
+            });
+        }
+
+        // Uncollected coins
+        const uncollected = currentMap.interactables.filter(i =>
+            i.type === 'item' && i.itemKey?.startsWith('coin_') && !inventory.includes(i.itemKey!)
+        );
+        const collected = currentMap.interactables.filter(i =>
+            i.type === 'item' && i.itemKey?.startsWith('coin_') && inventory.includes(i.itemKey!)
+        );
+        const coinListY = 60 + (npcs.length > 0 ? 14 + npcs.length * 12 : 0);
+        ctx.fillStyle = '#ffd700'; ctx.fillText(`MÜNZEN (${collected.length}/${collected.length + uncollected.length}):`, 160, coinListY);
+        let cy = coinListY + 13;
+        uncollected.forEach(c => {
+            if (cy > height - 40) return;
+            const cx = Math.floor(c.position.x / TILE_SIZE);
+            const cyy = Math.floor(c.position.y / TILE_SIZE);
+            ctx.fillStyle = '#aaa';
+            ctx.fillText(`  (${cx},${cyy})`, 160, cy);
+            cy += 10;
         });
-        
+        if (uncollected.length === 0) {
+            ctx.fillStyle = '#4caf50';
+            ctx.fillText('  Alle gesammelt!', 160, cy);
+        }
+
+        // Player coords in menu
+        const mpx = Math.floor(player.position.x / TILE_SIZE);
+        const mpy = Math.floor(player.position.y / TILE_SIZE);
+        ctx.fillStyle = '#aaa'; ctx.fillText(`Spieler: (${mpx},${mpy})`, 20, height - 44);
+
         // Save Button
         ctx.fillStyle = '#4cc9f0';
         ctx.fillText("[S] Save Game", 20, height - 30);
         
         ctx.fillStyle = '#ffff00'; ctx.textAlign = 'center'; ctx.fillText("[ESC] Back", width/2, height - 10);
+    }
+
+    // Full map overlay (M key)
+    if (mapOpenRef.current && currentMap) {
+        const cols = currentMap.tiles[0].length;
+        const rows = currentMap.tiles.length;
+
+        // Pre-render minimap to offscreen canvas (only when dirty)
+        if (minimapDirty.current || !minimapCanvasRef.current) {
+            const offscreen = document.createElement('canvas');
+            offscreen.width = cols;
+            offscreen.height = rows;
+            const oc = offscreen.getContext('2d')!;
+            for (let ty = 0; ty < rows; ty++) {
+                for (let tx = 0; tx < cols; tx++) {
+                    oc.fillStyle = MINIMAP_COLORS[currentMap.tiles[ty][tx]] || '#000';
+                    oc.fillRect(tx, ty, 1, 1);
+                }
+            }
+            minimapCanvasRef.current = offscreen;
+            minimapDirty.current = false;
+        }
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, width, height);
+
+        const padding = 16;
+        const availW = width - padding * 2;
+        const availH = height - padding * 2 - 20;
+        const scale = Math.min(availW / cols, availH / rows);
+        const mapW = cols * scale;
+        const mapH = rows * scale;
+        const ox = Math.floor((width - mapW) / 2);
+        const oy = Math.floor((height - mapH) / 2) + 6;
+
+        // Border
+        ctx.fillStyle = '#333';
+        ctx.fillRect(ox - 2, oy - 2, mapW + 4, mapH + 4);
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(minimapCanvasRef.current, ox, oy, mapW, mapH);
+        ctx.imageSmoothingEnabled = false;
+
+        // Player position marker
+        const px = player.position.x / TILE_SIZE;
+        const py = player.position.y / TILE_SIZE;
+        const markerX = ox + px * scale;
+        const markerY = oy + py * scale;
+
+        // Blinking player dot
+        const blink = Math.floor(Date.now() / 300) % 2 === 0;
+        if (blink) {
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.arc(markerX, markerY, Math.max(3, scale * 2), 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(markerX, markerY, Math.max(1.5, scale), 0, Math.PI * 2);
+        ctx.fill();
+
+        // Viewport rectangle
+        const vpX = ox + (cameraX / TILE_SIZE) * scale;
+        const vpY = oy + (cameraY / TILE_SIZE) * scale;
+        const vpW = (width / TILE_SIZE) * scale;
+        const vpH = (height / TILE_SIZE) * scale;
+        ctx.strokeStyle = '#ffcc00';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(vpX, vpY, vpW, vpH);
+
+        // Title and hint
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('MAP', width / 2, oy - 6);
+        ctx.fillStyle = '#888';
+        ctx.font = '8px "Courier New", monospace';
+        ctx.fillText('[M] Close', width / 2, oy + mapH + 12);
     }
   };
 
@@ -538,7 +806,7 @@ export default function GameCanvas() {
                 setTimeout(() => {
                     setGameState(prev => ({
                         ...prev,
-                        dialog: { isOpen: true, text: ["Willkommen in der Welt.", "Gefahren lauern in der Dunkelheit."], currentLine: 0 }
+                        dialog: { isOpen: true, text: ["Hallo und herzlich willkommen zum Hackathon bei Siemens!"], currentLine: 0 }
                     }));
                 }, 1000);
             } else if (e.code === 'KeyL') {

@@ -27,7 +27,15 @@ const COLORS = {
     rock: { base: '#6c757d', light: '#adb5bd', dark: '#495057', moss: '#588157', highlight: '#ced4da' },
     bush: { base: '#40916c', light: '#52b788', dark: '#2d6a4f', berries: '#d00000' },
     road: { base: '#555555', line: '#888888', dark: '#444444', edge: '#4a4a4a' },
-    building: { base: '#b0b0b0', light: '#c8c8c8', dark: '#909090', accent: '#999999', window: '#6a8caf', windowDark: '#4a6a8a' },
+    building: {
+        base: '#b0b0b0', light: '#c8c8c8', dark: '#909090', accent: '#999999',
+        window: '#6a8caf', windowDark: '#4a6a8a',
+        wallSouth: '#7a7a7a', wallEast: '#8a8a8a', wallCorner: '#6a6a6a',
+        parapet: '#d0d0d0', parapetLight: '#dcdcdc',
+        roofLine: '#a0a0a0', roofPanel: '#bbb',
+        darkBase: '#808080', darkWallSouth: '#5a5a5a', darkWallEast: '#686868',
+        darkWallCorner: '#4e4e4e', darkParapet: '#9a9a9a', darkRoofLine: '#757575',
+    },
     sidewalk: { base: '#d0ccc4', light: '#ddd9d0', dark: '#bbb7ae', crack: '#aaa69d' },
     parking: { base: '#707070', line: '#ccc', car: ['#c0392b', '#2980b9', '#f1c40f', '#ecf0f1', '#2c3e50'] },
     plaza: { base: '#c4b8a8', light: '#d4c8b8', dark: '#b0a494', tile: '#bab0a0' },
@@ -255,22 +263,86 @@ export const drawTile = (ctx: CanvasRenderingContext2D, tile: number, x: number,
             break;
         }
 
-        case 16: { // Building (flat roof, top-down)
+        case 16: { // Building — 3D extruded roof with visible walls
             const blSeed = tileX * 41 + tileY * 59;
-            ctx.fillStyle = COLORS.building.light;
-            ctx.fillRect(x + 2, y + 2, 6, 6);
-            ctx.fillRect(x + 18, y + 2, 6, 6);
-            ctx.fillRect(x + 2, y + 18, 6, 6);
-            ctx.fillRect(x + 18, y + 18, 6, 6);
-            // AC unit / rooftop detail
-            if (blSeed % 5 === 0) { ctx.fillStyle = COLORS.building.accent; ctx.fillRect(x + 10, y + 10, 12, 12); ctx.fillStyle = COLORS.building.dark; ctx.fillRect(x + 12, y + 12, 8, 8); }
-            // Edge lines
-            ctx.fillStyle = COLORS.building.dark;
-            const isB = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 16 || map.tiles[ny][nx] === 22; };
-            if (!isB(0, -1)) ctx.fillRect(x, y, ts, 3);
-            if (!isB(0, 1)) ctx.fillRect(x, y + ts - 3, ts, 3);
-            if (!isB(-1, 0)) ctx.fillRect(x, y, 3, ts);
-            if (!isB(1, 0)) ctx.fillRect(x + ts - 3, y, 3, ts);
+            const WH = 6; // wall height (south)
+            const WW = 5; // wall width (east)
+            const isB16 = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 16 || map.tiles[ny][nx] === 22; };
+            const bN = isB16(0, -1); const bS = isB16(0, 1); const bW = isB16(-1, 0); const bE = isB16(1, 0);
+            const bSE = isB16(1, 1);
+
+            // South wall (visible face)
+            if (!bS) {
+                ctx.fillStyle = COLORS.building.wallSouth;
+                ctx.fillRect(x, y + ts - WH, ts, WH);
+                ctx.fillStyle = 'rgba(0,0,0,0.12)';
+                ctx.fillRect(x, y + ts - 2, ts, 2);
+            }
+            // East wall (visible face)
+            if (!bE) {
+                ctx.fillStyle = COLORS.building.wallEast;
+                ctx.fillRect(x + ts - WW, y, WW, ts);
+                ctx.fillStyle = 'rgba(0,0,0,0.08)';
+                ctx.fillRect(x + ts - 1, y, 1, ts);
+            }
+            // SE corner — darkest where walls meet
+            if (!bS && !bE) {
+                ctx.fillStyle = COLORS.building.wallCorner;
+                ctx.fillRect(x + ts - WW, y + ts - WH, WW, WH);
+            }
+            // Exposed east wall gets a south-wall bottom if the SE neighbor is also empty
+            if (!bE && !bSE && bS) {
+                ctx.fillStyle = COLORS.building.wallCorner;
+                ctx.fillRect(x + ts - WW, y + ts - WH, WW, WH);
+            }
+
+            // Roof surface (above walls)
+            const roofW = bE ? ts : ts - WW;
+            const roofH = bS ? ts : ts - WH;
+            ctx.fillStyle = COLORS.building.base;
+            ctx.fillRect(x, y, roofW, roofH);
+
+            // Roof panel texture
+            ctx.fillStyle = COLORS.building.roofLine;
+            const panelSpacing = 8;
+            for (let py = 4; py < roofH - 2; py += panelSpacing) {
+                ctx.fillRect(x + 1, y + py, roofW - 2, 1);
+            }
+            for (let px = 10; px < roofW - 2; px += panelSpacing * 2) {
+                ctx.fillRect(x + px, y + 1, 1, roofH - 2);
+            }
+
+            // Rooftop details (AC units, vents, skylights)
+            if (blSeed % 4 === 0 && roofW > 16 && roofH > 16) {
+                const acX = x + 4 + (blSeed % 6);
+                const acY = y + 4 + ((blSeed >> 3) % 6);
+                ctx.fillStyle = COLORS.building.dark;
+                ctx.fillRect(acX, acY, 10, 8);
+                ctx.fillStyle = COLORS.building.accent;
+                ctx.fillRect(acX + 1, acY + 1, 8, 6);
+                ctx.fillStyle = COLORS.building.roofLine;
+                ctx.fillRect(acX + 3, acY + 2, 4, 4);
+            }
+            if (blSeed % 6 === 0 && roofW > 12 && roofH > 12) {
+                ctx.fillStyle = COLORS.building.window;
+                ctx.fillRect(x + roofW - 14, y + 3, 8, 6);
+            }
+
+            // Parapet highlights (top/left edges where exposed)
+            if (!bN) {
+                ctx.fillStyle = COLORS.building.parapetLight;
+                ctx.fillRect(x, y, roofW, 2);
+            }
+            if (!bW) {
+                ctx.fillStyle = COLORS.building.parapet;
+                ctx.fillRect(x, y, 2, roofH);
+            }
+
+            // Cast shadow on ground (south side, drawn as gradient at bottom of south wall)
+            if (!bS) {
+                ctx.fillStyle = 'rgba(0,0,0,0.18)';
+                ctx.fillRect(x + 2, y + ts - 1, ts - 2, 1);
+            }
             break;
         }
 
@@ -341,21 +413,96 @@ export const drawTile = (ctx: CanvasRenderingContext2D, tile: number, x: number,
             break;
         }
 
-        case 22: { // Building dark variant (shadow / different wing)
-            ctx.fillStyle = COLORS.building.dark;
-            ctx.fillRect(x, y, ts, ts);
-            ctx.fillStyle = COLORS.building.accent;
+        case 22: { // Building dark — taller/different wing with 3D extrusion
             const bdSeed = tileX * 37 + tileY * 71;
-            // Window pattern
-            if (bdSeed % 3 === 0) { ctx.fillStyle = COLORS.building.window; ctx.fillRect(x + 6, y + 6, 8, 6); ctx.fillRect(x + 18, y + 18, 8, 6); }
-            if (bdSeed % 4 === 0) { ctx.fillStyle = COLORS.building.windowDark; ctx.fillRect(x + 6, y + 18, 8, 6); ctx.fillRect(x + 18, y + 6, 8, 6); }
-            // Edge lines
+            const DWH = 8; // taller wall = looks like a taller structure
+            const DWW = 6;
             const isBd = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 16 || map.tiles[ny][nx] === 22; };
-            ctx.fillStyle = '#666';
-            if (!isBd(0, -1)) ctx.fillRect(x, y, ts, 3);
-            if (!isBd(0, 1)) ctx.fillRect(x, y + ts - 3, ts, 3);
-            if (!isBd(-1, 0)) ctx.fillRect(x, y, 3, ts);
-            if (!isBd(1, 0)) ctx.fillRect(x + ts - 3, y, 3, ts);
+            const dN = isBd(0, -1); const dS = isBd(0, 1); const dW = isBd(-1, 0); const dE = isBd(1, 0);
+            const dSE = isBd(1, 1);
+
+            // South wall
+            if (!dS) {
+                ctx.fillStyle = COLORS.building.darkWallSouth;
+                ctx.fillRect(x, y + ts - DWH, ts, DWH);
+                // Window row on south wall
+                ctx.fillStyle = COLORS.building.windowDark;
+                for (let wx = 3; wx < ts - DWW - 3; wx += 8) {
+                    ctx.fillRect(x + wx, y + ts - DWH + 2, 4, 3);
+                }
+                ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                ctx.fillRect(x, y + ts - 2, ts, 2);
+            }
+            // East wall
+            if (!dE) {
+                ctx.fillStyle = COLORS.building.darkWallEast;
+                ctx.fillRect(x + ts - DWW, y, DWW, ts);
+                // Window column on east wall
+                ctx.fillStyle = COLORS.building.windowDark;
+                for (let wy = 3; wy < ts - DWH - 3; wy += 8) {
+                    ctx.fillRect(x + ts - DWW + 1, y + wy, 3, 4);
+                }
+                ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                ctx.fillRect(x + ts - 1, y, 1, ts);
+            }
+            // SE corner
+            if (!dS && !dE) {
+                ctx.fillStyle = COLORS.building.darkWallCorner;
+                ctx.fillRect(x + ts - DWW, y + ts - DWH, DWW, DWH);
+            }
+            if (!dE && !dSE && dS) {
+                ctx.fillStyle = COLORS.building.darkWallCorner;
+                ctx.fillRect(x + ts - DWW, y + ts - DWH, DWW, DWH);
+            }
+
+            // Roof surface
+            const drW = dE ? ts : ts - DWW;
+            const drH = dS ? ts : ts - DWH;
+            ctx.fillStyle = COLORS.building.darkBase;
+            ctx.fillRect(x, y, drW, drH);
+
+            // Roof texture — heavier panel grid
+            ctx.fillStyle = COLORS.building.darkRoofLine;
+            for (let py = 6; py < drH - 2; py += 6) {
+                ctx.fillRect(x + 1, y + py, drW - 2, 1);
+            }
+            for (let px = 8; px < drW - 2; px += 12) {
+                ctx.fillRect(x + px, y + 1, 1, drH - 2);
+            }
+
+            // Rooftop details (skylights / windows visible from above)
+            if (bdSeed % 3 === 0 && drW > 14 && drH > 14) {
+                ctx.fillStyle = COLORS.building.window;
+                const slX = x + 3 + (bdSeed % 8);
+                const slY = y + 3 + ((bdSeed >> 3) % 6);
+                ctx.fillRect(slX, slY, 8, 6);
+                ctx.fillStyle = COLORS.building.windowDark;
+                ctx.fillRect(slX + 1, slY + 1, 6, 4);
+            }
+            if (bdSeed % 5 === 0 && drW > 16 && drH > 12) {
+                ctx.fillStyle = '#6a6a6a';
+                ctx.fillRect(x + drW - 12, y + 2, 8, 6);
+                ctx.fillStyle = '#555';
+                ctx.fillRect(x + drW - 11, y + 3, 6, 4);
+            }
+
+            // Parapet highlights
+            if (!dN) {
+                ctx.fillStyle = COLORS.building.darkParapet;
+                ctx.fillRect(x, y, drW, 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                ctx.fillRect(x, y, drW, 1);
+            }
+            if (!dW) {
+                ctx.fillStyle = COLORS.building.darkParapet;
+                ctx.fillRect(x, y, 2, drH);
+            }
+
+            // Cast shadow
+            if (!dS) {
+                ctx.fillStyle = 'rgba(0,0,0,0.22)';
+                ctx.fillRect(x + 3, y + ts - 1, ts - 3, 1);
+            }
             break;
         }
 
@@ -519,7 +666,59 @@ export const drawEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number
 export const drawItem = (ctx: CanvasRenderingContext2D, item: Interactable, time: number) => {
     const x = item.position.x; const y = item.position.y; const float = Math.sin(time / 300) * 3;
     if (item.type === 'item') {
-        if (item.itemKey === 'flower') { drawCircle(ctx, x+16, y+16+float, 6, '#ffc6ff'); drawCircle(ctx, x+16, y+16+float, 3, '#fff'); } 
+        if (item.itemKey?.startsWith('coin')) {
+            const coinFloat = Math.sin(time / 400 + (x * 7 + y * 13) * 0.1) * 3;
+            const cx = x + 16;
+            const cy = y + 12 + coinFloat;
+            const spin = Math.sin(time / 250 + (x + y) * 0.05);
+            const coinW = Math.max(2, Math.abs(spin) * 8);
+            const coinH = 10;
+
+            // Glow
+            ctx.fillStyle = 'rgba(255, 215, 0, 0.2)';
+            ctx.beginPath();
+            ctx.arc(cx, cy + 2, 12 + Math.sin(time / 200) * 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.beginPath();
+            ctx.ellipse(cx, y + 26, 5, 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Coin body (squashes to simulate spin)
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, coinW, coinH, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Highlight edge
+            if (coinW > 3) {
+                ctx.fillStyle = '#ffec80';
+                ctx.beginPath();
+                ctx.ellipse(cx - coinW * 0.2, cy - 1, coinW * 0.5, coinH * 0.6, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Dark edge on back-spin
+            if (spin < 0 && coinW > 3) {
+                ctx.fillStyle = '#c8a200';
+                ctx.beginPath();
+                ctx.ellipse(cx + coinW * 0.3, cy + 1, coinW * 0.3, coinH * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Sparkle particles
+            const sparkle = Math.sin(time / 150 + x * 3) > 0.7;
+            if (sparkle) {
+                ctx.fillStyle = '#fff';
+                const sx = cx + Math.sin(time / 100) * 6;
+                const sy = cy - 6 + Math.cos(time / 130) * 3;
+                ctx.fillRect(sx - 1, sy, 3, 1);
+                ctx.fillRect(sx, sy - 1, 1, 3);
+            }
+        }
+        else if (item.itemKey === 'flower') { drawCircle(ctx, x+16, y+16+float, 6, '#ffc6ff'); drawCircle(ctx, x+16, y+16+float, 3, '#fff'); } 
         else if (item.itemKey === 'berry') { const by = y + 10 + float; drawRect(ctx, x + 12, by, 8, 8, '#d00000'); drawRect(ctx, x + 16, by - 2, 2, 4, '#52b788'); } 
         else if (item.itemKey?.includes('potion')) { const by = y + 10 + float; drawRect(ctx, x + 12, by, 8, 10, '#ff99c8'); drawRect(ctx, x + 14, by - 4, 4, 4, '#fff'); drawRect(ctx, x + 13, by - 6, 6, 2, '#ad7a99'); ctx.fillStyle = 'rgba(255, 153, 200, 0.3)'; ctx.beginPath(); ctx.arc(x + 16, by + 5, 10 + Math.sin(time/200)*2, 0, Math.PI*2); ctx.fill(); } 
         else if (item.itemKey?.includes('key')) { const by = y + 10 + float; drawRect(ctx, x + 10, by, 12, 8, '#ffd700'); drawRect(ctx, x + 18, by + 8, 2, 6, '#ffd700'); drawRect(ctx, x + 20, by + 12, 2, 2, '#ffd700'); }
@@ -530,13 +729,60 @@ export const drawItem = (ctx: CanvasRenderingContext2D, item: Interactable, time
     } else if (item.type === 'sign') {
         drawRect(ctx, x + 14, y + 10, 4, 22, COLORS.wood.dark); drawRect(ctx, x + 2, y + 4, 28, 16, COLORS.wood.base); drawRect(ctx, x + 4, y + 6, 24, 12, COLORS.wood.grain); ctx.fillStyle = COLORS.wood.dark; ctx.fillRect(x + 6, y + 10, 20, 1); ctx.fillRect(x + 6, y + 13, 16, 1);
     } else if (item.type === 'npc') {
-        const ts = TILE_SIZE; const px = x + 8; const py = y + 2;
-        ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x + ts/2, y + ts - 2, 8, 3, 0, 0, Math.PI*2); ctx.fill();
-        drawRect(ctx, px, py + 12, 16, 14, '#457b9d'); drawRect(ctx, px, py, 16, 14, '#f4a261'); drawRect(ctx, px, py, 16, 6, '#e5e5e5');
-        drawRect(ctx, px - 2, py + 2, 4, 8, '#e5e5e5'); drawRect(ctx, px + 14, py + 2, 4, 8, '#e5e5e5');
-        drawRect(ctx, px + 4, py + 8, 2, 2, '#000'); drawRect(ctx, px + 10, py + 8, 2, 2, '#000');
-        drawRect(ctx, px + 2, py + 24, 5, 6, '#1d3557'); drawRect(ctx, px + 9, py + 24, 5, 6, '#1d3557');
-        if (item.active) { const bounce = Math.sin(time / 200) * 2; ctx.fillStyle = '#ffff00'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('!', x + 16, y - 5 + bounce); }
+        const ts = TILE_SIZE;
+        const px = x + 8;
+        const py = y + 2;
+        const idle = Math.sin(time / 800) * 1;
+
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.beginPath(); ctx.ellipse(x + ts / 2, y + ts - 2, 10, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+        // Siemens-teal recolor: shirt=#009999, pants=#1b3a4b, hair=#e0e0e0, skin=#f0d5b8, backpack=#006666
+        const npcShirt = '#009999';
+        const npcSkin = '#f0d5b8';
+        const npcPants = '#1b3a4b';
+        const npcHair = '#e0e0e0';
+
+        // Body
+        drawRect(ctx, px, py + 12 + idle, 16, 14, npcShirt);
+        // Head
+        drawRect(ctx, px, py + idle, 16, 14, npcSkin);
+        // Hair
+        ctx.fillStyle = npcHair;
+        ctx.fillRect(px, py - 2 + idle, 16, 8);
+        ctx.fillRect(px - 2, py + 2 + idle, 2, 6);
+        ctx.fillRect(px + 16, py + 2 + idle, 2, 6);
+        // Eyes (always facing down / toward player)
+        drawRect(ctx, px + 4, py + 8 + idle, 2, 3, '#264653');
+        drawRect(ctx, px + 10, py + 8 + idle, 2, 3, '#264653');
+        // Mouth
+        ctx.fillStyle = '#d00000';
+        ctx.fillRect(px + 7, py + 14 + idle, 2, 1);
+        // Arms
+        ctx.fillStyle = npcShirt;
+        ctx.fillRect(px - 4, py + 14 + idle, 4, 8);
+        ctx.fillRect(px + 16, py + 14 + idle, 4, 8);
+        ctx.fillStyle = npcSkin;
+        ctx.fillRect(px - 4, py + 22 + idle, 4, 4);
+        ctx.fillRect(px + 16, py + 22 + idle, 4, 4);
+        // Legs
+        drawRect(ctx, px + 2, py + 24 + idle, 5, 6, npcPants);
+        drawRect(ctx, px + 9, py + 24 + idle, 5, 6, npcPants);
+        // Siemens badge on shirt
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(px + 6, py + 14 + idle, 4, 3);
+        ctx.fillStyle = '#009999';
+        ctx.fillRect(px + 7, py + 15 + idle, 2, 1);
+
+        // Interaction indicator
+        if (item.active) {
+            const bounce = Math.sin(time / 200) * 2;
+            ctx.fillStyle = '#ffff00';
+            ctx.font = 'bold 12px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', x + 16, y - 5 + bounce);
+        }
     } else if (item.type === 'push_block') {
         const ts = TILE_SIZE;
         ctx.fillStyle = '#8d99ae';

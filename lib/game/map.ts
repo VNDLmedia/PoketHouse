@@ -9,6 +9,9 @@ export const ITEMS: Record<string, {name: string, description: string}> = {
     'old_key': { name: "Alter Schlüssel", description: "Rostig, aber stabil." },
     'flower': { name: "Wildblume", description: "Hübsch anzusehen." },
     'berry': { name: "Waldbeere", description: "Süß und saftig." },
+    'coin': { name: "Münze", description: "Eine glänzende goldene Münze." },
 };
+
+export const WALKABLE_TILES = new Set([0, 3, 4, 5, 6, 7, 12, 13, 14, 17, 19]);
 
 export const MAPS: Record<string, any> = {}; 
