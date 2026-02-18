@@ -1,5 +1,6 @@
 // 0: Grass, 1: Wall/Tree, 2: Water, 3: Floor (House), 4: Path, 5: Door, 6: Carpet, 7: Flower, 8: Rock, 9: HouseWall, 10: Roof, 11: Bush, 12: TallGrass, 13: Sand, 14: Dirt
-export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+// 15: Road, 16: Building, 17: Sidewalk, 18: Parking, 19: Plaza, 20: Hedge, 21: SportField, 22: BuildingDark, 23: BigTree
+export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23;
 
 export const TILE_SIZE = 32;
 

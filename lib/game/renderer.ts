@@ -25,7 +25,14 @@ const COLORS = {
     },
     flower: { stem: '#52b788', petals: ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#a0c4ff', '#bdb2ff', '#ffc6ff'] },
     rock: { base: '#6c757d', light: '#adb5bd', dark: '#495057', moss: '#588157', highlight: '#ced4da' },
-    bush: { base: '#40916c', light: '#52b788', dark: '#2d6a4f', berries: '#d00000' }
+    bush: { base: '#40916c', light: '#52b788', dark: '#2d6a4f', berries: '#d00000' },
+    road: { base: '#555555', line: '#888888', dark: '#444444', edge: '#4a4a4a' },
+    building: { base: '#b0b0b0', light: '#c8c8c8', dark: '#909090', accent: '#999999', window: '#6a8caf', windowDark: '#4a6a8a' },
+    sidewalk: { base: '#d0ccc4', light: '#ddd9d0', dark: '#bbb7ae', crack: '#aaa69d' },
+    parking: { base: '#707070', line: '#ccc', car: ['#c0392b', '#2980b9', '#f1c40f', '#ecf0f1', '#2c3e50'] },
+    plaza: { base: '#c4b8a8', light: '#d4c8b8', dark: '#b0a494', tile: '#bab0a0' },
+    hedge: { base: '#2d6a4f', light: '#40916c', dark: '#1b4332', top: '#52b788' },
+    sportField: { base: '#4caf50', light: '#66bb6a', line: '#fff', dark: '#388e3c' }
 };
 
 const drawRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) => {
@@ -43,16 +50,19 @@ const drawCircle = (ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 // --- Blending Helpers ---
 
 const getBaseColor = (tile: number): string | null => {
-    // Return base colors for ground tiles
-    if (tile === 0) return COLORS.grass.base; // Grass
-    if (tile === 14) return COLORS.dirt.base; // Dirt
-    if (tile === 13) return COLORS.sand.base; // Sand
-    if (tile === 2) return COLORS.water.base; // Water
-    if (tile === 4) return COLORS.path.base; // Path
-    
-    // Vegetation/Objects default to Grass background to prevent holes
-    if (tile === 1 || tile === 7 || tile === 8 || tile === 11 || tile === 12) return COLORS.grass.base;
-    
+    if (tile === 0) return COLORS.grass.base;
+    if (tile === 14) return COLORS.dirt.base;
+    if (tile === 13) return COLORS.sand.base;
+    if (tile === 2) return COLORS.water.base;
+    if (tile === 4) return COLORS.path.base;
+    if (tile === 15) return COLORS.road.base;
+    if (tile === 16) return COLORS.building.base;
+    if (tile === 17) return COLORS.sidewalk.base;
+    if (tile === 18) return COLORS.parking.base;
+    if (tile === 19) return COLORS.plaza.base;
+    if (tile === 21) return COLORS.sportField.base;
+    if (tile === 22) return COLORS.building.dark;
+    if (tile === 1 || tile === 7 || tile === 8 || tile === 11 || tile === 12 || tile === 20 || tile === 23) return COLORS.grass.base;
     return null;
 };
 
@@ -95,20 +105,15 @@ const drawWaterEdges = (ctx: CanvasRenderingContext2D, tile: number, x: number, 
 export const drawTile = (ctx: CanvasRenderingContext2D, tile: number, x: number, y: number, time: number, map: MapData, tileX: number, tileY: number) => {
     const ts = TILE_SIZE;
     
-    // 1. Draw Base Ground (Clean, No Blending)
-    // We check for specific ground types to apply the Water Edge logic (rounded corners)
-    // Include objects (1,7,8,11,12) so they have a background and water curves around them
-    if (tile === 0 || tile === 13 || tile === 14 || tile === 4 || 
-        tile === 1 || tile === 7 || tile === 8 || tile === 11 || tile === 12) {
-        const c = getBaseColor(tile);
-        if (c) drawRect(ctx, x, y, ts, ts, c);
-        
-        // Keep Water Edges (Rounded) because user liked "organic" shapes but disliked "fading"
-        drawWaterEdges(ctx, tile, x, y, map, tileX, tileY);
-    } else if (tile !== 2 && tile !== 9 && tile !== 10 && tile !== 3 && tile !== 5 && tile !== 6) {
-         // Fallback for other base tiles if any
-         const c = getBaseColor(tile);
-         if (c) drawRect(ctx, x, y, ts, ts, c);
+    // 1. Draw Base Ground
+    const baseColor = getBaseColor(tile);
+    if (baseColor) {
+        drawRect(ctx, x, y, ts, ts, baseColor);
+        if (tile === 0 || tile === 13 || tile === 14 || tile === 4 ||
+            tile === 1 || tile === 7 || tile === 8 || tile === 11 || tile === 12 || tile === 20 || tile === 23 ||
+            tile === 15 || tile === 17 || tile === 18 || tile === 19 || tile === 21) {
+            drawWaterEdges(ctx, tile, x, y, map, tileX, tileY);
+        }
     }
 
     // 2. Special Rendering (Water Effects, Details)
@@ -235,6 +240,183 @@ export const drawTile = (ctx: CanvasRenderingContext2D, tile: number, x: number,
             const gSway = Math.sin(time / 300 + tileX + tileY) * 3; ctx.fillStyle = COLORS.grass.blade;
             for(let i=0; i<3; i++) { const gx = x + 8 + (i * 8); const gy = y + 24 + ((tileX*i)%4); ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + 2 + gSway, gy - 12); ctx.lineTo(gx + 4, gy); ctx.fill(); }
             break;
+
+        case 15: { // Road
+            const rdSeed = tileX * 31 + tileY * 47;
+            if (rdSeed % 7 === 0) { ctx.fillStyle = COLORS.road.dark; ctx.fillRect(x + (rdSeed % 20), y + (rdSeed % 24), 6, 4); }
+            if (rdSeed % 11 === 0) { ctx.fillStyle = COLORS.road.edge; ctx.fillRect(x + (rdSeed % 16), y + (rdSeed % 20), 4, 3); }
+            // Dashed center line for horizontal roads
+            if (tileY > 0 && map.tiles[tileY - 1]?.[tileX] === 15 && tileY < map.tiles.length - 1 && map.tiles[tileY + 1]?.[tileX] === 15) {
+                if (tileX % 3 === 0) { ctx.fillStyle = COLORS.road.line; ctx.fillRect(x + 14, y, 4, ts); }
+            }
+            if (tileX > 0 && map.tiles[tileY]?.[tileX - 1] === 15 && tileX < map.tiles[0].length - 1 && map.tiles[tileY]?.[tileX + 1] === 15) {
+                if (tileY % 3 === 0) { ctx.fillStyle = COLORS.road.line; ctx.fillRect(x, y + 14, ts, 4); }
+            }
+            break;
+        }
+
+        case 16: { // Building (flat roof, top-down)
+            const blSeed = tileX * 41 + tileY * 59;
+            ctx.fillStyle = COLORS.building.light;
+            ctx.fillRect(x + 2, y + 2, 6, 6);
+            ctx.fillRect(x + 18, y + 2, 6, 6);
+            ctx.fillRect(x + 2, y + 18, 6, 6);
+            ctx.fillRect(x + 18, y + 18, 6, 6);
+            // AC unit / rooftop detail
+            if (blSeed % 5 === 0) { ctx.fillStyle = COLORS.building.accent; ctx.fillRect(x + 10, y + 10, 12, 12); ctx.fillStyle = COLORS.building.dark; ctx.fillRect(x + 12, y + 12, 8, 8); }
+            // Edge lines
+            ctx.fillStyle = COLORS.building.dark;
+            const isB = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 16 || map.tiles[ny][nx] === 22; };
+            if (!isB(0, -1)) ctx.fillRect(x, y, ts, 3);
+            if (!isB(0, 1)) ctx.fillRect(x, y + ts - 3, ts, 3);
+            if (!isB(-1, 0)) ctx.fillRect(x, y, 3, ts);
+            if (!isB(1, 0)) ctx.fillRect(x + ts - 3, y, 3, ts);
+            break;
+        }
+
+        case 17: { // Sidewalk
+            const swSeed = tileX * 23 + tileY * 37;
+            // Paving pattern
+            ctx.fillStyle = COLORS.sidewalk.dark;
+            ctx.fillRect(x, y, ts, 1);
+            ctx.fillRect(x, y, 1, ts);
+            if (swSeed % 4 === 0) { ctx.fillStyle = COLORS.sidewalk.crack; ctx.fillRect(x + (swSeed % 20) + 4, y + 2, 1, ts - 4); }
+            if (swSeed % 6 === 0) { ctx.fillStyle = COLORS.sidewalk.crack; ctx.fillRect(x + 2, y + (swSeed % 20) + 4, ts - 4, 1); }
+            break;
+        }
+
+        case 18: { // Parking lot
+            const pkSeed = tileX * 53 + tileY * 67;
+            // Parking line markings
+            if (tileX % 2 === 0) { ctx.fillStyle = COLORS.parking.line; ctx.fillRect(x, y, 1, ts); ctx.fillRect(x + ts - 1, y, 1, ts); }
+            // Parked car (some tiles)
+            if (pkSeed % 3 === 0) {
+                const carColor = COLORS.parking.car[pkSeed % COLORS.parking.car.length];
+                ctx.fillStyle = carColor;
+                ctx.fillRect(x + 4, y + 6, ts - 8, ts - 12);
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.fillRect(x + 6, y + 8, ts - 12, 6);
+            }
+            break;
+        }
+
+        case 19: { // Plaza / courtyard
+            const plSeed = tileX * 19 + tileY * 29;
+            ctx.fillStyle = COLORS.plaza.tile;
+            // Checker pattern
+            if ((tileX + tileY) % 2 === 0) {
+                ctx.fillStyle = COLORS.plaza.light;
+                ctx.fillRect(x + 1, y + 1, ts - 2, ts - 2);
+            }
+            ctx.fillStyle = COLORS.plaza.dark;
+            ctx.fillRect(x, y, ts, 1);
+            ctx.fillRect(x, y, 1, ts);
+            if (plSeed % 8 === 0) { ctx.fillStyle = COLORS.plaza.dark; ctx.fillRect(x + 8, y + 8, 2, 2); }
+            break;
+        }
+
+        case 20: { // Hedge (trimmed rectangular bush on grass)
+            ctx.fillStyle = COLORS.hedge.dark;
+            ctx.fillRect(x + 2, y + 4, ts - 4, ts - 6);
+            ctx.fillStyle = COLORS.hedge.base;
+            ctx.fillRect(x + 3, y + 5, ts - 6, ts - 9);
+            ctx.fillStyle = COLORS.hedge.top;
+            ctx.fillRect(x + 4, y + 6, ts - 8, ts - 12);
+            ctx.fillStyle = COLORS.hedge.light;
+            ctx.fillRect(x + 6, y + 7, 4, 3);
+            ctx.fillRect(x + 16, y + 9, 4, 3);
+            break;
+        }
+
+        case 21: { // Sport field
+            ctx.fillStyle = COLORS.sportField.light;
+            if ((tileX + tileY) % 2 === 0) ctx.fillRect(x, y, ts, ts);
+            // Field lines
+            ctx.fillStyle = COLORS.sportField.line;
+            const isField = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 21; };
+            if (!isField(0, -1)) ctx.fillRect(x, y, ts, 2);
+            if (!isField(0, 1)) ctx.fillRect(x, y + ts - 2, ts, 2);
+            if (!isField(-1, 0)) ctx.fillRect(x, y, 2, ts);
+            if (!isField(1, 0)) ctx.fillRect(x + ts - 2, y, 2, ts);
+            break;
+        }
+
+        case 22: { // Building dark variant (shadow / different wing)
+            ctx.fillStyle = COLORS.building.dark;
+            ctx.fillRect(x, y, ts, ts);
+            ctx.fillStyle = COLORS.building.accent;
+            const bdSeed = tileX * 37 + tileY * 71;
+            // Window pattern
+            if (bdSeed % 3 === 0) { ctx.fillStyle = COLORS.building.window; ctx.fillRect(x + 6, y + 6, 8, 6); ctx.fillRect(x + 18, y + 18, 8, 6); }
+            if (bdSeed % 4 === 0) { ctx.fillStyle = COLORS.building.windowDark; ctx.fillRect(x + 6, y + 18, 8, 6); ctx.fillRect(x + 18, y + 6, 8, 6); }
+            // Edge lines
+            const isBd = (dx: number, dy: number) => { const nx = tileX + dx; const ny = tileY + dy; if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false; return map.tiles[ny][nx] === 16 || map.tiles[ny][nx] === 22; };
+            ctx.fillStyle = '#666';
+            if (!isBd(0, -1)) ctx.fillRect(x, y, ts, 3);
+            if (!isBd(0, 1)) ctx.fillRect(x, y + ts - 3, ts, 3);
+            if (!isBd(-1, 0)) ctx.fillRect(x, y, 3, ts);
+            if (!isBd(1, 0)) ctx.fillRect(x + ts - 3, y, 3, ts);
+            break;
+        }
+
+        case 23: { // BigTree — mergeable dense canopy, place clusters for large trees
+            const btSeed = tileX * 197 + tileY * 311;
+            const isBT = (dx: number, dy: number) => {
+                const nx = tileX + dx; const ny = tileY + dy;
+                if (nx < 0 || nx >= map.tiles[0].length || ny < 0 || ny >= map.tiles.length) return false;
+                return map.tiles[ny][nx] === 23;
+            };
+            const n = isBT(0, -1); const s = isBT(0, 1); const w = isBT(-1, 0); const e = isBT(1, 0);
+            const nw = isBT(-1, -1); const ne = isBT(1, -1); const sw = isBT(-1, 1); const se = isBT(1, 1);
+
+            const colorIdx = ((Math.floor(tileX / 3) * 7 + Math.floor(tileY / 3) * 13) % COLORS.tree.variations.length + COLORS.tree.variations.length) % COLORS.tree.variations.length;
+            const mainCol = COLORS.tree.variations[colorIdx];
+            const darkCol = COLORS.tree.leavesDark;
+            const lightCol = COLORS.tree.leavesLight;
+
+            // Fill entire tile with canopy base
+            drawRect(ctx, x, y, ts, ts, mainCol);
+
+            // Randomized leaf blobs for texture
+            for (let i = 0; i < 5; i++) {
+                const bx = x + ((btSeed * (i + 1) * 7) % 28) + 2;
+                const by = y + ((btSeed * (i + 3) * 11) % 28) + 2;
+                const br = 4 + ((btSeed * (i + 2)) % 5);
+                drawCircle(ctx, bx, by, br, (i % 2 === 0) ? lightCol : darkCol);
+            }
+
+            // Rounded edges where canopy meets non-BigTree tiles
+            const edgeR = 10;
+            if (!n && !w && !nw) { drawCircle(ctx, x, y, edgeR, COLORS.grass.base); }
+            if (!n && !e && !ne) { drawCircle(ctx, x + ts, y, edgeR, COLORS.grass.base); }
+            if (!s && !w && !sw) { drawCircle(ctx, x, y + ts, edgeR, COLORS.grass.base); }
+            if (!s && !e && !se) { drawCircle(ctx, x + ts, y + ts, edgeR, COLORS.grass.base); }
+
+            // Shadow on exposed edges
+            if (!n) { ctx.fillStyle = darkCol; ctx.fillRect(x, y, ts, 3); }
+            if (!s) { ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(x, y + ts - 4, ts, 4); }
+            if (!w) { ctx.fillStyle = darkCol; ctx.fillRect(x, y, 3, ts); }
+            if (!e) { ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fillRect(x + ts - 3, y, 3, ts); }
+
+            // Trunk visible at center of cluster (only if all 4 neighbors present)
+            if (n && s && w && e && btSeed % 5 === 0) {
+                const tcx = x + ts / 2 + ((btSeed % 7) - 3);
+                const tcy = y + ts / 2 + ((btSeed % 5) - 2);
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath(); ctx.arc(tcx, tcy, 8, 0, Math.PI * 2); ctx.fill();
+                drawCircle(ctx, tcx, tcy, 5, COLORS.tree.trunk);
+                drawCircle(ctx, tcx - 1, tcy - 1, 3, '#5a3e28');
+            }
+
+            // Light dapple highlights
+            for (let i = 0; i < 3; i++) {
+                const lx = x + ((btSeed * (i + 9)) % 24) + 4;
+                const ly = y + ((btSeed * (i + 13)) % 24) + 4;
+                ctx.fillStyle = 'rgba(180,230,170,0.3)';
+                ctx.beginPath(); ctx.arc(lx, ly, 3 + (btSeed % 3), 0, Math.PI * 2); ctx.fill();
+            }
+            break;
+        }
 
         default: 
             break;
